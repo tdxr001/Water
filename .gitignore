@@ -1,0 +1,40 @@
+# OS and editor files
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.swp
+*.swo
+*~
+
+# Logs, captures, and local test output
+*.log
+*.err
+*.out
+*.tmp
+*.temp
+*.bak
+*.orig
+*_capture.txt
+*_capture.err.txt
+
+# Keil/uVision user-local files
+MDK-ARM/*.uvguix.*
+MDK-ARM/*.uvgui.*
+MDK-ARM/*.uvgui_*
+
+# Keil build output directory
+MDK-ARM/U575-TEST/
+
+# Keil build outputs wherever generated
+*.o
+*.d
+*.axf
+*.elf
+*.hex
+*.bin
+*.map
+*.lst
+*.lnp
+*.dep
+*.iex
+*.build_log.htm
