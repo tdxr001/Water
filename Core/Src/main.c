@@ -294,14 +294,14 @@ void APP_HandleSensorWakeup(void)
 打开陀螺仪;
 采几次陀螺仪数据;
 算最大角速度;
-如果满足报警条件，就通过 ESP8266 发 TCP 报警;
+	如果满足报警条件（阈值这里还不会）5-5，就通过 ESP8266 发 TCP 报警;
 关闭陀螺仪;
 */
     
 		
 /* 
-				LSM6DSR 的加速度唤醒中断已经说明井盖出现过一次明显动作。
-    这里读取 WAKE_UP_SRC 清除传感器内部中断源，再采一组加速度用于上报。
+				LSM6DSR 的加速度唤醒中断已经说明传感器出现了一次明显动作。
+				这里读取 WAKE_UP_SRC 清除传感器内部中断源（不清不进中断），再采一组加速度用于上报。
 */
     wake_source = LSM6DSR_Read_Wakeup_Source();
     LSM6DSR_Read_Accel(&ax_raw, &ay_raw, &az_raw);
@@ -312,8 +312,7 @@ void APP_HandleSensorWakeup(void)
 
 
 
-    /* 陀螺仪功耗明显高于只开加速度计。
-       因此平时关闭，只有被 PA5 唤醒后短时间开启，采样几次判断是否有旋转/撬动。 */
+    /* 被中断唤醒后短时间开启陀螺仪，采样几次判断是否有旋转/撬动。 */
     LSM6DSR_Enable_Gyro();
     HAL_Delay(20);
     for (uint8_t i = 0; i < LSM6DSR_GYRO_SAMPLE_COUNT; i++)
@@ -333,7 +332,7 @@ void APP_HandleSensorWakeup(void)
     gy_dps = APP_GyroRawToDps(gy_raw);
     gz_dps = APP_GyroRawToDps(gz_raw);
 
-    /* 告警条件分两层：
+    /* 告警条件分两层：（AI）
        1. LSM6DSR 自身已经触发 wake-up 中断，说明加速度扰动超过阈值；
        2. 陀螺仪峰值超过阈值，说明可能存在旋转、掀开或撬动动作。 */
     snprintf(alert_msg, sizeof(alert_msg),

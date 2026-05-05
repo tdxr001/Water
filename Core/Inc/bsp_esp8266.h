@@ -5,6 +5,7 @@
   * 
   ******************************************************************************
   */
+	//华清远见
 #ifndef __BSP_ESP8266_H__
 #define __BSP_ESP8266_H__
 //
@@ -17,7 +18,7 @@
 #if defined (__CC_ARM)
 #pragma anon_unions
 #endif
-//TCP测试
+//TCP测试（未改）
 #define User_ESP8266_SSID     "ESP"          					//wifi名
 #define User_ESP8266_PWD      "12345678"     	 					//wifi密码
 

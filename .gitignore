@@ -38,3 +38,9 @@ MDK-ARM/U575-TEST/
 *.dep
 *.iex
 *.build_log.htm
+
+# Local MQTT desktop applications kept with the project folder.
+# Track only the lightweight config and launcher scripts.
+软件应用程序-MQTT测试/*
+!软件应用程序-MQTT测试/*.bat
+!软件应用程序-MQTT测试/*.conf

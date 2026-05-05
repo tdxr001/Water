@@ -64,7 +64,7 @@ uint8_t LSM6DSR_Config_Wakeup_INT1(void)
         return 0;
     }
 
-    /* 打开 LSM6DSR 内部中断功能，否则 wake-up 事件不会被路由到 INT1。 */
+    /* 打开 LSM6DSR 内部中断 */
     if (LSM6DSR_WriteReg(LSM6DSR_TAP_CFG2, 0x80) != HAL_OK)
     {
         return 0;
