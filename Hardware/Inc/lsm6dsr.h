@@ -21,7 +21,7 @@ extern volatile uint8_t Sensor_Flag;
 
 /*
  * Keep the register map explicit even if an editor/encoding joins a comment
- * with the next #define.  The values below are the ones used by the driver.
+ * with the next #define.  The values below are the ones used by the driver.NBNBNBNBNBNNBNBNBNBBNNBNBNBNNBNBNBNNBNBNBNBNBNBNBNBNBNBNBNNBNBNBNBNB
  */
 #undef LSM6DSR_CTRL3_C
 #undef LSM6DSR_WAKE_UP_SRC

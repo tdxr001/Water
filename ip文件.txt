@@ -1,0 +1,3 @@
+mosquitto-local-ip1883.conf
+MQTTX、U575 程序里的 broker IP、以及 mosquitto-local-ip1883.conf 里的这一行都要改成新的电脑
+ IP：listener 1883 172.20.10.6

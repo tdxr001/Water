@@ -34,7 +34,7 @@ uint8_t LSM6DSR_Init(void)
         return 0;
     }
 
-    /* 加速度计保持常开，用 104Hz / +/-2g。
+    /* 加速度计保持常开，这里用的 416Hz / +/-2g。		手册46页，CTRL1和3好像用的一样
        STM32 休眠时由 LSM6DSR 自己判断 wake-up，中断经 INT1 输出到 PA5。 */
     if (LSM6DSR_WriteReg(LSM6DSR_CTRL1_XL, 0x60) != HAL_OK)
     {
@@ -59,7 +59,7 @@ uint8_t LSM6DSR_Read_ID(void)
 
 uint8_t LSM6DSR_Config_Wakeup_INT1(void)
 {
-    if (LSM6DSR_WriteReg(LSM6DSR_TAP_CFG0, 0x50) != HAL_OK)
+    if (LSM6DSR_WriteReg(LSM6DSR_TAP_CFG0, 0x51) != HAL_OK)
     {
         return 0;
     }
@@ -70,8 +70,10 @@ uint8_t LSM6DSR_Config_Wakeup_INT1(void)
         return 0;
     }
 
-    /* 设置加速度唤醒阈值，默认约 125mg。
-       现场如果误报多，可以先提高这个宏；如果不够灵敏，则降低这个宏。 */
+    /* 设置加速度唤醒阈值		1LSB = 31.25mg
+		`LSM6DSR_WAKEUP_THS_62M = 0x02 = 2
+`````阈值 ≈ 2 × 31.25 mg = 62.5 mg
+     可以先提高这个宏降低灵敏；如果不够灵敏，则降低这个宏。 */
     if (LSM6DSR_WriteReg(LSM6DSR_WAKE_UP_THS, LSM6DSR_WAKEUP_THS_62MG) != HAL_OK)
     {
         return 0;

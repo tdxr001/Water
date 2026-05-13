@@ -29,20 +29,35 @@
 #include "net_test.h"
 #include "low_power.h"
 #include "bsp_esp8266.h"
+#include "beep.h"
 #include <stdio.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-
+typedef struct
+{
+  const char *type;          
+  uint8_t level;             
+  int32_t peak;              // 本次事件最大变化值
+  uint8_t can_use_count;     
+  uint32_t time_ms;          //对比的时间，序列的对比
+  uint8_t send;              // 是否发送网络警告
+  uint8_t beep;              
+} MotionResult_t;
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define APP_MOTION_POLL_DIAG 0
-#define APP_MOTION_DELTA_MG 60
-#define APP_MOTION_POLL_MS 200
-
+#define SMP_NUM   12    // 采样点数
+#define SMP_MS    10    // 采样间隔毫秒
+#define ACT_MG    90    // 记为有效震动的最小变化值
+#define TOUCH_MG  320   // touch1 的峰值上限
+#define KNOCK_MG  1100   
+#define TOUCH_CNT 5     // touch1 的最大有效点数
+#define KNOCK_CNT 9      
+#define TOUCH_MS  50    //touch1 的最大持续时间
+#define KNOCK_MS  100   
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -61,11 +76,12 @@ extern volatile uint8_t TcpClosedFlag;
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
 static void APP_HandleSensorWakeup(void);
-static void APP_HandleMotionPollDiag(void);
+static void SendMotionAlert(const MotionResult_t *result, int32_t ax_mg, int32_t ay_mg, int32_t az_mg, uint8_t clear_wake, uint32_t delay_ms);
+static void CheckMotion(MotionResult_t *result, int32_t *ax_mg, int32_t *ay_mg, int32_t *az_mg);
+static void MarkMotion(MotionResult_t *result, int32_t peak, uint8_t can_use_count, uint32_t time_ms);
 static int32_t APP_Abs32(int32_t value);
 static int32_t APP_Max3(int32_t a, int32_t b, int32_t c);
-static int32_t APP_AccelRawToMg(int16_t raw);
-static int32_t APP_GyroRawToDps(int16_t raw);
+static int32_t AccelRawToMg(int16_t raw);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -142,9 +158,7 @@ int main(void)
   if (LSM6DSR_Init() == 0)
   {
     char error_msg[96];
-    snprintf(error_msg, sizeof(error_msg),
-             "ERROR:LSM6DSR init failed,who_am_i=0x%02X,check wiring/address\r\n",
-             LSM6DSR_Read_ID());
+    snprintf(error_msg, sizeof(error_msg), "ERROR:LSM6DSR init failed,who_am_i=0x%02X,check wiring/address\r\n", LSM6DSR_Read_ID());
     (void)ESP8266_SendAlert(error_msg);
     Error_Handler();
   }
@@ -167,13 +181,7 @@ int main(void)
     wake_source = LSM6DSR_Read_Wakeup_Source();
     int1_level = (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_5) == GPIO_PIN_SET) ? 1U : 0U;
     snprintf(sensor_msg, sizeof(sensor_msg),
-             "SENSOR_READY:lsm6dsr,who=0x%02X,int1=%u,wake=0x%02X,acc_mg=%ld,%ld,%ld\r\n",
-             LSM6DSR_Read_ID(),
-             int1_level,
-             wake_source,
-             (long)APP_AccelRawToMg(ax_raw),
-             (long)APP_AccelRawToMg(ay_raw),
-             (long)APP_AccelRawToMg(az_raw));
+             "SENSOR_READY:lsm6dsr,who=0x%02X,int1=%u,wake=0x%02X,acc_mg=%ld,%ld,%ld\r\n",LSM6DSR_Read_ID(), int1_level,wake_source,(long)AccelRawToMg(ax_raw),(long)AccelRawToMg(ay_raw),(long)AccelRawToMg(az_raw));
     (void)ESP8266_SendAlert(sensor_msg);
   }
 #endif
@@ -185,18 +193,11 @@ int main(void)
   {
     /* USER CODE BEGIN WHILE */
 #if APP_NET_TEST_ONLY
-    /* 网络单项诊断模式：
-       暂时不进入 STOP2，也不依赖 LSM6DSR。
-       只验证底板 ESP8266 是否能连上 WiFi，并把数据发到电脑 TCP Server。 */
     APP_NetworkTest_Run();
-#else
-#if APP_MOTION_POLL_DIAG
-    APP_HandleMotionPollDiag();
 #else
     if (Sensor_Flag)
     {
-      Sensor_Flag = 0;             //记得重置标志位
-      APP_HandleSensorWakeup();
+      Sensor_Flag = 0;
       APP_HandleSensorWakeup();
     }
     else
@@ -209,7 +210,6 @@ int main(void)
         APP_HandleSensorWakeup();
       }
     }
-#endif
 #endif
 
     /* USER CODE END WHILE */
@@ -257,9 +257,9 @@ void SystemClock_Config(void)
 
   /** Initializes the CPU, AHB and APB buses clocks
   */
-  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
-                              |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2
-                              |RCC_CLOCKTYPE_PCLK3;
+  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK | RCC_CLOCKTYPE_SYSCLK
+                              | RCC_CLOCKTYPE_PCLK1 | RCC_CLOCKTYPE_PCLK2
+                              | RCC_CLOCKTYPE_PCLK3;
   RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
   RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
   RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV1;
@@ -273,132 +273,186 @@ void SystemClock_Config(void)
 }
 
 /* USER CODE BEGIN 4 */
-void APP_HandleSensorWakeup(void)
+static void SendMotionAlert(const MotionResult_t *result, int32_t ax_mg, int32_t ay_mg, int32_t az_mg, uint8_t clear_wake, uint32_t delay_ms)
 {
-    int16_t ax_raw = 0;
-    int16_t ay_raw = 0;
-    int16_t az_raw = 0;
-    int16_t gx_raw = 0;
-    int16_t gy_raw = 0;
-    int16_t gz_raw = 0;
-    int32_t ax_mg,ay_mg,az_mg;
-    int32_t gx_dps,gy_dps,gz_dps;
-    int32_t gyro_peak_dps = 0;
-    uint8_t wake_source;
-    char alert_msg[220];
+    char alert_msg[128] = {0};    // 网络警告消息缓冲区
+    uint8_t send_ok = 0;          // 网络发送结果状态
 
-
-/*			思路（唤醒回来后）
-读取 LSM6DSR 的 wake-up 来源;
-读取加速度;
-打开陀螺仪;
-采几次陀螺仪数据;
-算最大角速度;
-	如果满足报警条件（阈值这里还不会）5-5，就通过 ESP8266 发 TCP 报警;
-关闭陀螺仪;
-*/
-    
-		
-/* 
-				LSM6DSR 的加速度唤醒中断已经说明传感器出现了一次明显动作。
-				这里读取 WAKE_UP_SRC 清除传感器内部中断源（不清不进中断），再采一组加速度用于上报。
-*/
-    wake_source = LSM6DSR_Read_Wakeup_Source();
-    LSM6DSR_Read_Accel(&ax_raw, &ay_raw, &az_raw);
-
-    ax_mg = APP_AccelRawToMg(ax_raw);
-    ay_mg = APP_AccelRawToMg(ay_raw);
-    az_mg = APP_AccelRawToMg(az_raw);
-
-
-
-    /* 被中断唤醒后短时间开启陀螺仪，采样几次判断是否有旋转/撬动。 */
-    LSM6DSR_Enable_Gyro();
-    HAL_Delay(20);
-    for (uint8_t i = 0; i < LSM6DSR_GYRO_SAMPLE_COUNT; i++)
-    {
-        LSM6DSR_Read_Gyro(&gx_raw, &gy_raw, &gz_raw);
-        gx_dps = APP_GyroRawToDps(gx_raw);
-        gy_dps = APP_GyroRawToDps(gy_raw);
-        gz_dps = APP_GyroRawToDps(gz_raw);
-        gyro_peak_dps = APP_Max3(gyro_peak_dps,
-                                 APP_Abs32(gx_dps),
-                                 APP_Max3(APP_Abs32(gy_dps), APP_Abs32(gz_dps), 0));
-        HAL_Delay(10);
-    }
-    LSM6DSR_Disable_Gyro();
-
-    gx_dps = APP_GyroRawToDps(gx_raw);
-    gy_dps = APP_GyroRawToDps(gy_raw);
-    gz_dps = APP_GyroRawToDps(gz_raw);
-
-    /* 告警条件分两层：（AI）
-       1. LSM6DSR 自身已经触发 wake-up 中断，说明加速度扰动超过阈值；
-       2. 陀螺仪峰值超过阈值，说明可能存在旋转、掀开或撬动动作。 */
+//警告信息
     snprintf(alert_msg, sizeof(alert_msg),
-             "ALERT:water_meter_tamper,source=int1,wake=0x%02X,acc_mg=%ld,%ld,%ld,gyro_dps=%ld,%ld,%ld,gyro_peak=%ld\r\n",
-             wake_source,
-             (long)ax_mg, (long)ay_mg, (long)az_mg,
-             (long)gx_dps, (long)gy_dps, (long)gz_dps,
-             (long)gyro_peak_dps);
-
+             "警告,event=%s,time=%lu,acc_mg=%ld,%ld,%ld\r\n",
+             result->type,
+             (unsigned long)result->time_ms,
+             (long)ax_mg,
+             (long)ay_mg,
+             (long)az_mg);
     ESP8266_Init(&huart5, (uint8_t *)gRX_Buff, 115200);
-    (void)ESP8266_SendAlert(alert_msg);
+    send_ok = (uint8_t)ESP8266_SendAlert(alert_msg);
+    if (send_ok == 0U)
+    {
+        printf("警告发送失败,event=%s,time=%lu,acc_mg=%ld,%ld,%ld\r\n",
+               result->type,
+               (unsigned long)result->time_ms,
+               (long)ax_mg,
+               (long)ay_mg,
+               (long)az_mg);
+    }
 
-    (void)LSM6DSR_Read_Wakeup_Source();
+    PlayBeep(result->beep);
+
+    if (clear_wake != 0U)
+    {
+        (void)LSM6DSR_Read_Wakeup_Source();
+    }
+
+    if (delay_ms > 0U)
+    {
+        HAL_Delay(delay_ms);
+    }
 }
 
-static void APP_HandleMotionPollDiag(void)
+void APP_HandleSensorWakeup(void) // 三层震动判断与告警处理
 {
-    static uint8_t initialized = 0;
-    static int32_t last_ax_mg = 0;
-    static int32_t last_ay_mg = 0;
-    static int32_t last_az_mg = 0;
-    int16_t ax_raw = 0;
-    int16_t ay_raw = 0;
-    int16_t az_raw = 0;
-    int32_t ax_mg;
-    int32_t ay_mg;
-    int32_t az_mg;
-    int32_t delta_peak_mg;
-    char alert_msg[160];
+    MotionResult_t result = {0};  // 震动分类结果
+    int32_t ax_mg = 0;            // 最后一组 X 轴加速度 mg 值
+    int32_t ay_mg = 0;            
+    int32_t az_mg = 0;          
 
-    LSM6DSR_Read_Accel(&ax_raw, &ay_raw, &az_raw);
-    ax_mg = APP_AccelRawToMg(ax_raw);
-    ay_mg = APP_AccelRawToMg(ay_raw);
-    az_mg = APP_AccelRawToMg(az_raw);
+    /*
+     思路:
+     1. 传感器中断唤醒后，连续采样一小段加速度序列；
+     2. 计算相邻样本之间的变化峰值；
+     3. 统计有效震动点数量和持续时间；
+     4. touch1、touch2、touch3。
+    */
+    (void)LSM6DSR_Read_Wakeup_Source(); // 先读一次唤醒源，清掉锁存状态！！！！！！！！！！！！
+    CheckMotion(&result, &ax_mg, &ay_mg, &az_mg);
 
-    if (initialized == 0U)
+    if (result.level == 0)
     {
-        initialized = 1U;
-        last_ax_mg = ax_mg;
-        last_ay_mg = ay_mg;
-        last_az_mg = az_mg;
-        HAL_Delay(APP_MOTION_POLL_MS);
         return;
     }
 
-    delta_peak_mg = APP_Max3(APP_Abs32(ax_mg - last_ax_mg),
-                             APP_Abs32(ay_mg - last_ay_mg),
-                             APP_Abs32(az_mg - last_az_mg));
-
-    last_ax_mg = ax_mg;
-    last_ay_mg = ay_mg;
-    last_az_mg = az_mg;
-
-    if (delta_peak_mg >= APP_MOTION_DELTA_MG)
+    if (result.send == 0)
     {
-        snprintf(alert_msg, sizeof(alert_msg),
-                 "ALERT:water_meter_tamper,source=poll,acc_delta=%ld,acc_mg=%ld,%ld,%ld\r\n",
-                 (long)delta_peak_mg,
-                 (long)ax_mg, (long)ay_mg, (long)az_mg);
-
-        ESP8266_Init(&huart5, (uint8_t *)gRX_Buff, 115200);
-        (void)ESP8266_SendAlert(alert_msg);
-        HAL_Delay(1200);
+        printf("记录,event=%s,time=%lu,acc_mg=%ld,%ld,%ld\r\n",result.type,(unsigned long)result.time_ms,(long)ax_mg,(long)ay_mg,(long)az_mg);
+        PlayBeep(result.beep);
+        return;
     }
 
-    HAL_Delay(APP_MOTION_POLL_MS);
+    SendMotionAlert(&result, ax_mg, ay_mg, az_mg, 1U, 0U);
+}
+
+static void CheckMotion(MotionResult_t *result, int32_t *ax_mg, int32_t *ay_mg, int32_t *az_mg)
+{
+    int16_t ax_raw = 0;           // X 轴原始值
+    int16_t ay_raw = 0;           
+    int16_t az_raw = 0;           
+    int32_t last_ax = 0;          // 上一组 X 轴 mg 值
+    int32_t last_ay = 0;          
+    int32_t last_az = 0;         
+    int32_t now_ax = 0;           // 当前 X 轴 mg 值
+    int32_t now_ay = 0;           
+    int32_t now_az = 0;           
+    int32_t delta_x = 0;          // X 轴变化值
+    int32_t delta_y = 0;         
+    int32_t delta_z = 0;          
+    int32_t delta_now = 0;        // 当前样本最大变化值
+    int32_t peak = 0;             // 本次事件最大变化值
+    uint8_t can_use_count = 0;    // 有效震动点数量
+    uint32_t time_ms = 0;         // 事件持续时间
+
+    result->type = "none";
+    result->level = 0;
+    result->peak = 0;
+    result->can_use_count = 0;
+    result->time_ms = 0;
+    result->send = 0;
+    result->beep = 0;
+
+    // 阈值确定要找一个合适的基准值，后面的样本都和前一组做差。 （还没找到）
+    LSM6DSR_Read_Accel(&ax_raw, &ay_raw, &az_raw);
+    last_ax = AccelRawToMg(ax_raw);
+    last_ay = AccelRawToMg(ay_raw);
+    last_az = AccelRawToMg(az_raw);
+
+    for (uint8_t i = 1; i < SMP_NUM; i++)
+    {
+        HAL_Delay(SMP_MS);
+        LSM6DSR_Read_Accel(&ax_raw, &ay_raw, &az_raw);
+        now_ax = AccelRawToMg(ax_raw);
+        now_ay = AccelRawToMg(ay_raw);
+        now_az = AccelRawToMg(az_raw);
+
+        delta_x = APP_Abs32(now_ax - last_ax);
+        delta_y = APP_Abs32(now_ay - last_ay);
+        delta_z = APP_Abs32(now_az - last_az);
+        delta_now = APP_Max3(delta_x, delta_y, delta_z);
+
+        if (delta_now > peak)
+        {
+            peak = delta_now;
+        }
+
+        // 有效震动点要变化值达到 ACT_MG
+        if (delta_now >= ACT_MG)
+        {
+            can_use_count++;
+            time_ms = (uint32_t)i * SMP_MS;
+        }
+
+        last_ax = now_ax;
+        last_ay = now_ay;
+        last_az = now_az;
+    }
+
+    *ax_mg = last_ax;
+    *ay_mg = last_ay;
+    *az_mg = last_az;
+    MarkMotion(result, peak, can_use_count, time_ms);
+}
+
+static void MarkMotion(MotionResult_t *result, int32_t peak, uint8_t can_use_count, uint32_t time_ms)
+{
+    result->peak = peak;
+    result->can_use_count = can_use_count;
+    result->time_ms = time_ms;
+    result->beep = 0;
+
+    if (peak < ACT_MG)
+    {
+        result->type = "none";
+        result->level = 0;
+        result->send = 0;
+        result->beep = 0;
+        return;
+    }
+
+    // touch1
+    if ((peak < TOUCH_MG) && (can_use_count <= TOUCH_CNT) && (time_ms <= TOUCH_MS))
+    {
+        result->type = "touch1";
+        result->level = 1;
+        result->send = 0;
+        result->beep = 1;
+        return;
+    }
+
+    // touch2
+    if ((peak < KNOCK_MG) && (can_use_count <= KNOCK_CNT) && (time_ms <= KNOCK_MS))
+    {
+        result->type = "touch2";
+        result->level = 2;
+        result->send = 1;
+        result->beep = 2;
+        return;
+    }
+
+    // touch3
+    result->type = "touch3";
+    result->level = 3;
+    result->send = 1;
+    result->beep = 3;
 }
 
 static int32_t APP_Abs32(int32_t value)
@@ -423,19 +477,14 @@ static int32_t APP_Max3(int32_t a, int32_t b, int32_t c)
     return max;
 }
 
-static int32_t APP_AccelRawToMg(int16_t raw)
+static int32_t AccelRawToMg(int16_t raw)
 {
-    return ((int32_t)raw * 61L) / 1000L;
-}
-
-static int32_t APP_GyroRawToDps(int16_t raw)
-{
-    return ((int32_t)raw * 175L) / 10000L;
+    return ((int32_t)raw * 61) / 1000;
 }
 
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {
-    if(GPIO_Pin == GPIO_PIN_5)
+    if (GPIO_Pin == GPIO_PIN_5)
     {
         Sensor_Flag = 1;
     }

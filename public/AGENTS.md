@@ -1,11 +1,15 @@
 ﻿# U575 水表防拆项目工作记录
 
-更新时间：2026-05-05  
+更新时间：2026-05-13  
 当前工程目录：`C:\Users\zhengzhibo\Desktop\U575-TEST`
 
 ## 0. 最新进度
 
 本轮已完成：
+
+2026-05-13 当前状态：已清理本轮旧的构建/烧录/MQTT 运行日志；Git 目录扫描确认只保留当前有效 `.git`，未发现旧的残留 Git 仓库目录。准备提交并同步 GitHub。
+
+2026-05-11 当前状态：低功耗 INT1 正式链路已跑通，当前代码状态保持为正式低功耗版本。后续新增代码要求优先模块化封装，详见第 9 节。
 
 2026-05-05 当前状态：低功耗 INT1 正式链路已跑通，且当前烧录/代码状态保持为正式低功耗版本。
 
@@ -468,3 +472,27 @@ ALERT:water_meter_tamper,source=int1,wake=0x...,acc_mg=...,gyro_dps=...,gyro_pea
 4. 正式项目中不建议长期使用 `APP_NET_TEST_ONLY = 1`；它只是网络诊断开关。
 5. 当前正式低功耗验证应保持 `APP_NET_TEST_ONLY=0`、`APP_MOTION_POLL_DIAG=0`。
 6. ESP8266 连接/发送重试已完成；后续如需优化，可关注误报率、告警节流、设备编号、时间戳和更正式的服务器协议。
+
+## 9. 后续代码组织要求
+
+与代码有关的新增工作，尤其是新增不同功能模块时，尽量以独立 `.c` / `.h` 文件形式封装，保持工程结构清晰，避免继续把逻辑堆到 `main.c`。
+
+建议原则：
+
+1. 单一职责：一个模块只负责一类功能，例如传感器驱动、告警判定、网络上报、低功耗管理、协议封包等。
+2. 头文件只暴露必要接口和配置宏，内部状态、静态辅助函数留在 `.c` 文件里。
+3. `main.c` 只保留系统初始化、主流程调度和少量应用入口逻辑。
+4. 新模块命名尽量直观，例如：
+
+```text
+Hardware/Inc/lsm6dsr.h
+Hardware/Src/lsm6dsr.c
+Core/Inc/app_alarm.h
+Core/Src/app_alarm.c
+Core/Inc/app_lowpower.h
+Core/Src/app_lowpower.c
+Core/Inc/app_protocol.h
+Core/Src/app_protocol.c
+```
+
+5. 如果后续新增云端/MQTT/HTTP/设备编号/时间戳/告警节流等功能，优先作为独立模块加入，再由 `main.c` 调用。
